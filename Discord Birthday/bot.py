@@ -6,34 +6,66 @@ import json
 from datetime import datetime, timedelta, time
 import pytz
 import asyncio
+import yt_dlp
 
+
+############################################################################################################
+#                                                                                                          #
+#                                                  SET UP                                                  #
+#                                                                                                          #
+############################################################################################################
+
+# Load token từ file .env
 load_dotenv()
 TOKEN = os.getenv('BOT_TOKEN')
 
+# Khởi tạo bot với intents
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="\\", intents=intents)
 
+# File lưu trữ dữ liệu sinh nhật
 BIRTHDAY_FILE = "birthdays.json"
 
-# Cài đặt múi giờ Việt Nam
+# Định nghĩa múi giờ Việt Nam
 local_tz = pytz.timezone("Asia/Ho_Chi_Minh")
 
+# Hàm load danh sách sinh nhật từ file JSON
 def load_birthdays():
-    if os.path.exists(BIRTHDAY_FILE):
-        with open(BIRTHDAY_FILE, "r", encoding="utf-8-sig") as f:
-            return json.load(f)
-    return {}
+    try:
+        with open("birthdays.json", "r", encoding="utf-8") as f:
+            data = f.read()
+            print(f"DEBUG - Nội dung file: {data}")  # Kiểm tra dữ liệu trong file
+            return json.loads(data) if data else {}
+    except FileNotFoundError:
+        print("⚠️ File không tồn tại, tạo mới...")
+        return {}
+    except json.JSONDecodeError:
+        print("❌ Lỗi JSON, kiểm tra lại file!")
+        return {}
 
+# Hàm lưu danh sách sinh nhật vào file JSON
 def save_birthdays(data):
     with open(BIRTHDAY_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
+        
+############################################################################################################
+#                                                                                                          #
+#                                        SỰ KIỆN KHI BOT KHỞI ĐỘNG                                         #
+#                                                                                                          #
+############################################################################################################
 
 @bot.event
 async def on_ready():
     print(f"{bot.user} đã sẵn sàng!")
     check_birthdays.start()
     check_tomorrow_birthdays.start()
+    
+############################################################################################################
+#                                                                                                          #
+#                                                 TASK LOOP                                                #
+#                                                                                                          #
+############################################################################################################
 
 @tasks.loop(time=time(0, 0, 0, tzinfo=local_tz))
 async def check_birthdays():
@@ -61,7 +93,7 @@ async def check_tomorrow_birthdays():
     tomorrow = now + timedelta(days=1)
     birthdays = load_birthdays()
     
-    birthday_list = []  # Danh sách lưu những người có sinh nhật vào ngày mai
+    birthday_list = []  
 
     for name, details in birthdays.items():
         birth_date = datetime.strptime(details["date_of_birth"], "%d/%m/%Y")
@@ -78,11 +110,16 @@ async def check_tomorrow_birthdays():
             )
             await channel.send(message)
 
-    # Xóa lời chúc của tất cả thành viên (vì hôm nay không phải ngày sinh nhật của họ)
     for details in birthdays.values():
         details["wishes"] = []
 
     save_birthdays(birthdays)
+    
+############################################################################################################
+#                                                                                                          #
+#                                             CÁC LỆNH CỦA BOT                                             #
+#                                                                                                          #
+############################################################################################################
 
 @bot.command(name="birthday_wishes")
 async def birthday_wishes(ctx, *, wish=None):
@@ -110,10 +147,26 @@ async def birthdays(ctx):
         await ctx.send("Không có dữ liệu sinh nhật nào được lưu trữ.")
         return
 
-    message = "# 🎉 Danh sách ngày sinh của các thành viên:\n"
-    sorted_birthdays = sorted(birthdays.items(), key=lambda item: datetime.strptime(item[1]['date_of_birth'], "%d/%m/%Y"))
+    priority_names = ["Hà Duy Long", "Nguyễn Thu An"]
+    priority_birthdays = {name: birthdays[name] for name in priority_names if name in birthdays}
 
-    for name, details in sorted_birthdays:
+    # Sắp xếp các thành viên còn lại theo ngày-tháng
+    other_birthdays = {
+        name: details for name, details in birthdays.items() if name not in priority_names
+    }
+    sorted_other_birthdays = sorted(
+        other_birthdays.items(),
+        key=lambda item: datetime.strptime(item[1]['date_of_birth'], "%d/%m/%Y").strftime("%m-%d")
+    )
+
+    message = "# 🎉 Danh sách ngày sinh của các thành viên:\n"
+    
+    # Thêm hai thành viên ưu tiên trước
+    for name, details in priority_birthdays.items():
+        message += f"- {name}: {details['date_of_birth']} (🌟 Ưu tiên)\n"
+
+    # Thêm các thành viên còn lại đã được sắp xếp
+    for name, details in sorted_other_birthdays:
         message += f"- {name}: {details['date_of_birth']}\n"
 
     await ctx.send(message)
@@ -139,6 +192,29 @@ async def birthday_month(ctx, month: int):
         message = f"Không có thành viên nào có sinh nhật trong tháng {month}."
 
     await ctx.send(message)
+    
+@bot.command()
+async def hello(ctx):
+    nickname = ctx.author.nick or ctx.author.name
+    await ctx.send(f"Xin chào {nickname}!\nChúc bạn một ngày vui vẻ!")
+
+@bot.command(name="help_me")
+async def help_command(ctx):
+    help_message = """
+# Danh sách các lệnh của bot:
+- `\\hello` : Lệnh chào hỏi và gửi lời chúc.
+- `\\birthdays` : Hiển thị danh sách sinh nhật của các thành viên trong nhóm.
+- `\\birthday_month` : Hiển thị danh sách sinh nhật của các thành viên theo tháng.
+- `\\birthday_wishes <lời chúc>` : Gửi lời chúc sinh nhật cho thành viên có sinh nhật vào ngày mai.
+- `\\help_me` : Hiển thị danh sách các lệnh và chức năng của bot.
+"""
+    await ctx.send(help_message)
+    
+############################################################################################################
+#                                                                                                          #
+#                                              LỆNH CỦA ADMIN                                              #
+#                                                                                                          #
+############################################################################################################
     
 # Hàm chuẩn hóa họ tên
 def normalize_name(name: str) -> str:
@@ -167,7 +243,6 @@ async def add_birthday(ctx):
         await ctx.send(f"⚠️ **{name}** đã tồn tại trong danh sách sinh nhật!")
         return
     
-    
     await ctx.send("📌 Vui lòng nhập ngày tháng năm sinh (dd/mm/yyyy):")
     # Hỏi ngày tháng năm sinh
     try:
@@ -191,22 +266,49 @@ async def add_birthday(ctx):
     }
     save_birthdays(birthdays)
     await ctx.send(f"🎉 Đã thêm sinh nhật của **{name}** vào danh sách thành công!")
+    
+@bot.command(name="delete_birthday")
+async def delete_birthday(ctx):
+    """Xóa sinh nhật của một thành viên khỏi danh sách (chỉ dành cho [Leader] Duy Long)."""
+    if ctx.author.nick != "[Leader] Duy Long":
+        await ctx.send("❌ Bạn không có quyền sử dụng lệnh này!")
+        return
 
-@bot.command()
-async def hello(ctx):
-    nickname = ctx.author.nick or ctx.author.name
-    await ctx.send(f"Xin chào {nickname}!\nChúc bạn một ngày vui vẻ!")
+    await ctx.send("📌 Vui lòng nhập tên cần xóa:")
+    try:
+        name_msg = await bot.wait_for("message", check=lambda m: m.author == ctx.author, timeout=60)
+        name = normalize_name(name_msg.content.strip())  # Chuẩn hóa họ tên
+    except asyncio.TimeoutError:
+        await ctx.send("⏳ Lỗi: Bạn đã không nhập thông tin kịp thời.")
+        return
 
-@bot.command(name="help_me")
-async def help_command(ctx):
-    help_message = """
-# Danh sách các lệnh của bot:
-- `\\hello` : Lệnh chào hỏi và gửi lời chúc.
-- `\\birthdays` : Hiển thị danh sách sinh nhật của các thành viên trong nhóm.
-- `\\birthday_month` : Hiển thị danh sách sinh nhật của các thành viên theo tháng.
-- `\\birthday_wishes <lời chúc>` : Gửi lời chúc sinh nhật cho thành viên có sinh nhật vào ngày mai.
-- `\\help_me` : Hiển thị danh sách các lệnh và chức năng của bot.
-"""
-    await ctx.send(help_message)
+    # Kiểm tra nếu tên có trong danh sách
+    birthdays = load_birthdays()
+    
+    if name not in birthdays:
+        await ctx.send(f"⚠️ Không tìm thấy **{name}** trong danh sách sinh nhật!")
+        return
+
+    # Xác nhận xóa
+    await ctx.send(f"⚠️ Bạn có chắc chắn muốn xóa sinh nhật của **{name}**? (Nhập 'yes' để xác nhận)")
+    try:
+        confirm_msg = await bot.wait_for("message", check=lambda m: m.author == ctx.author, timeout=30)
+        if confirm_msg.content.strip().lower() != "yes":
+            await ctx.send("❌ Hủy lệnh xóa.")
+            return
+    except asyncio.TimeoutError:
+        await ctx.send("⏳ Lỗi: Không nhận được xác nhận kịp thời.")
+        return
+
+    # Xóa sinh nhật khỏi danh sách và lưu lại
+    del birthdays[name]
+    save_birthdays(birthdays)
+    await ctx.send(f"✅ Đã xóa sinh nhật của **{name}** khỏi danh sách thành công!")
+    
+############################################################################################################
+#                                                                                                          #
+#                                                 RUN BOT                                                  #
+#                                                                                                          #
+############################################################################################################
 
 bot.run(TOKEN)

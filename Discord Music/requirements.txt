@@ -1,0 +1,7 @@
+anyio==4.4.0
+async-timeout==5.0.1
+discord.py==2.4.0
+python-dotenv>=0.20
+yt-dlp>=2024.1.1
+ffmpeg
+PyNaCl>=1.5.0
